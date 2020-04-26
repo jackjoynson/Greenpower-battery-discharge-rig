@@ -12,438 +12,216 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
-using System.Reflection;
-using Excel = Microsoft.Office.Interop.Excel;
-using Word = Microsoft.Office.Interop.Word;
-using Microsoft.Office.Core;
-using Forms = System.Windows.Forms;
+using Gauge;
+using System.IO.Ports;
 using System.IO;
-using System.Diagnostics;
+using Microsoft.Win32;
 
-namespace BatteryLogPlotter
+namespace DischargeControlPanel
 {
    /// <summary>
-   /// Battery plotting tool by Jack Joynson.
-   /// Scans network files then produces CSVs of final results
+   /// Interaction logic for MainWindow.xaml
    /// </summary>
-   public partial class MainWindow : Window
+   public partial class MainWindow : Window, IDisposable
    {
-      //Global variables
-      string batteryLogsPath = @"\\UKNML7112\GREENPOWER\DISCHARGE RIG\Discharge Logs";
-      string saveReportsPath = @"\\UKNML7112\GREENPOWER\DISCHARGE RIG\Reports";
-      List<string> selectableFiles = new List<string>();
-      List<string> selectableCodes = new List<string>();
-      private bool showErrors = true;
+      GaugeControl CurrentGauge, AmpHoursGauge, VoltageGauge, PWMDutyGauge;
+      SerialManager serialManager;
+      StreamWriter FileOutput;
 
-      int minimumFileLines = 20;
-
-      private enum cellColumns
-      {
-         status = 'A',
-         current = 'B',
-         amphours = 'C',
-         voltage = 'D',
-         aim = 'E',
-         PWM = 'F',
-         time = 'G'
-      }
-
-      private enum splitColumns
-      {
-         status,
-         current,
-         amphours,
-         voltage,
-         aim,
-         PWM,
-         time
-      }
-
-      private string[] columnNames = {"Status","Current","Amphours","Voltage","CurrentAim","PWM","Time"};
-      private bool[] saveColumn = { false, false, true, true, true, false, true };
-
-
-      private int numberColumns = 7;
 
       public MainWindow()
       {
          InitializeComponent();
+         InitUI();
+         serialManager = new SerialManager();
 
-         setDirectoryBox();
 
-
-         populateDischargeFilesListBox();
-         populateBatteryCodesListBox();
-      }
-
-      #region ************************************************************ initialisations methods **************************************************
-
-      private void setDirectoryBox()
-      {
-         txtDirectory.Text = batteryLogsPath;
-      }
-
-      #endregion
-
-      #region ************************************************************ button events ************************************************************
-
-      private void btnGenerateSingleReport_Click(object sender, RoutedEventArgs e)
-      {
-         showSimpleDialog("This has not been completed yet");
-         int selectedIndex = lstDischargeFiles.SelectedIndex;
-         if (selectedIndex >= 0)
+         string[] portName = SerialPort.GetPortNames();
+         foreach(string port in portName)
          {
-            string name = (string)lstDischargeFiles.SelectedValue;
-            createExcel(selectableFiles[selectedIndex], name);
+            MenuItem newMI = new MenuItem()
+            {
+               Header = port
+            };
+            newMI.Click += NewMI_Click;
+            PortMenu.Items.Add(newMI);
          }
       }
 
-      private void btnGenerateBatteryReport_Click(object sender, RoutedEventArgs e)
+      private void NewMI_Click(object sender, RoutedEventArgs e)
       {
-         int selectedIndex = lstBatteryCodes.SelectedIndex;
-         if (selectedIndex >= 0)
-         {
-            //showSimpleDialog(selectableCodes[selectedIndex]);
-            generateBatteryReport(selectableCodes[selectedIndex]);
-         }
+         serialManager.portName = (sender as MenuItem).Header.ToString();
       }
 
-      private void btnBrowse_Click(object sender, RoutedEventArgs e)
+      private void InitUI()
       {
-         Forms.FolderBrowserDialog folderBrowser = new Forms.FolderBrowserDialog();
-         folderBrowser.Description = "Select the folder containing the battery discharge logs";
-         folderBrowser.SelectedPath = batteryLogsPath;
-         if (folderBrowser.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+         CurrentGauge = new GaugeControl()
          {
-            if (Directory.Exists(folderBrowser.SelectedPath))
-            {
-               batteryLogsPath = folderBrowser.SelectedPath;
-               setDirectoryBox();
-               populateDischargeFilesListBox();
-               populateBatteryCodesListBox();
-            }
-            else
-            {
-               showSimpleDialog("Could not find the selected directory", "Error", Forms.MessageBoxIcon.Error);
-            }
+            MinValue = 0,
+            MaxValue = 35
+         };
+         CurrentGauge.SetRegionValue(1, 0, 10, Brushes.DarkRed);
+         CurrentGauge.SetRegionValue(2, 10, 20, Brushes.DarkOrange);
+         CurrentGauge.SetRegionValue(3, 20, 30, Brushes.DarkGreen);
+         CurrentGauge.SetRegionValue(4, 30, 35, Brushes.DarkRed);
 
-         }
+         AmpHoursGauge = new GaugeControl()
+         {
+            MinValue = 0,
+            MaxValue = 30
+         };
+         AmpHoursGauge.SetRegionValue(1, 0, 18, Brushes.DarkRed);
+         AmpHoursGauge.SetRegionValue(2, 18, 20, Brushes.DarkOrange);
+         AmpHoursGauge.SetRegionValue(3, 20, 24, Brushes.Yellow);
+         AmpHoursGauge.SetRegionValue(4, 24, 30, Brushes.DarkGreen);
+
+         VoltageGauge = new GaugeControl()
+         {
+            MinValue = 0,
+            MaxValue = 14
+         };
+         VoltageGauge.SetRegionValue(1, 0, 10.5, Brushes.DarkRed);
+         VoltageGauge.SetRegionValue(2, 10.5, 11, Brushes.Yellow);
+         VoltageGauge.SetRegionValue(3, 11, 12, Brushes.DarkGreen);
+         VoltageGauge.SetRegionValue(4, 12, 13, Brushes.YellowGreen);
+         VoltageGauge.SetRegionValue(5, 13, 14, Brushes.Yellow);
+
+         PWMDutyGauge = new GaugeControl()
+         {
+            MinValue = 0,
+            MaxValue = 100
+         };
+         PWMDutyGauge.SetRegionValue(1, 0, 60, Brushes.YellowGreen);
+         PWMDutyGauge.SetRegionValue(2, 60, 90, Brushes.Green);
+         PWMDutyGauge.SetRegionValue(3, 90, 100, Brushes.YellowGreen);
+
+
+
+         MainGrid.Children.Add(CurrentGauge);
+         Grid.SetColumn(CurrentGauge, 0);
+         Grid.SetRow(CurrentGauge, 1);
+         MainGrid.Children.Add(VoltageGauge);
+         Grid.SetColumn(VoltageGauge, 1);
+         Grid.SetRow(VoltageGauge, 1);
+         MainGrid.Children.Add(AmpHoursGauge);
+         Grid.SetColumn(AmpHoursGauge, 2);
+         Grid.SetRow(AmpHoursGauge, 1);
+         MainGrid.Children.Add(PWMDutyGauge);
+         Grid.SetColumn(PWMDutyGauge, 0);
+         Grid.SetRow(PWMDutyGauge, 2);
       }
 
-      #endregion
 
-      #region ************************************************************ General method ***********************************************************
-
-      private void showSimpleDialog(string message, string title = "Message", Forms.MessageBoxIcon icon = Forms.MessageBoxIcon.None)
+      private void UpdateUI(ValueSet valueSet)
       {
-         Forms.MessageBox.Show(message, title, Forms.MessageBoxButtons.OK, icon);
+         CurrentGauge.SetValue(valueSet.Current);
+         AmpHoursGauge.SetValue(valueSet.AmpHours);
+         VoltageGauge.SetValue(valueSet.Voltage);
+         PWMDutyGauge.SetValue(valueSet.PWMDuty);
+         timeTextBlock.Text = (valueSet.DischargeDuration / 60000.0).ToString();
       }
 
-      #endregion
 
-      #region ************************************************************ Misc methods *************************************************************
-
-      private void populateDischargeFilesListBox()
+      private void DischargeButton_Click(object sender, RoutedEventArgs e)
       {
-         if (Directory.Exists(batteryLogsPath))
+         if ((bool)DischargeButton.IsChecked)
          {
-            lstDischargeFiles.Items.Clear();
-            selectableFiles.Clear();
-            int length = batteryLogsPath.Length + 1;
-            try
+            string fileName = GetSavePath();
+            if (fileName != null)
             {
-               string[] files = Directory.GetFiles(batteryLogsPath);
-               foreach (string file in files)
+               if (serialManager.Connect(CurrentSlider.Value))
                {
-                  if (file.Length > (4 + length) && file.Contains(".csv"))
-                  {
-                     string toAdd = file.Substring(length, file.IndexOf(".csv") - length);
-                     lstDischargeFiles.Items.Add(toAdd);
-                     selectableFiles.Add(file);
-                  }
-               }
-
-
-            }
-            catch (Exception err)
-            {
-               showSimpleDialog("An error occured fetching the files in: " + batteryLogsPath + ". Error: " + err, "File error", Forms.MessageBoxIcon.Error);
-            }
-         }
-      }
-
-      private void populateBatteryCodesListBox()
-      {
-         if (Directory.Exists(batteryLogsPath))
-         {
-            lstBatteryCodes.Items.Clear();
-            selectableCodes.Clear();
-            int length = batteryLogsPath.Length + 1;
-            try
-            {
-               string[] files = Directory.GetFiles(batteryLogsPath);
-               foreach (string file in files)
-               {
-                  string postDir = file.Substring(length);
-                  if (postDir.Contains(' ') && postDir.Length > 4 && postDir.EndsWith(".csv"))
-                  {
-                     int spaceLoc = postDir.IndexOf(' ');
-                     string toAdd = postDir.Substring(0, spaceLoc).ToUpper();
-                     bool passed = true;
-                     foreach (string code in selectableCodes)
-                     {
-                        if (toAdd == code)
-                        {
-                           passed = false;
-                        }
-                     }
-                     if (passed)
-                     {
-                        selectableCodes.Add(toAdd);
-                     }
-                  }
-               }
-
-               selectableCodes.Sort();
-               foreach (string item in selectableCodes)
-               {
-                  lstBatteryCodes.Items.Add(item);
-               }
-            }
-            catch (Exception err)
-            {
-               showSimpleDialog("An error occured fetching the files in: " + batteryLogsPath + ". Error: " + err, "File error", Forms.MessageBoxIcon.Error);
-            }
-         }
-      }
-      #endregion
-
-
-      private void allButton_Click(object sender, RoutedEventArgs e)
-      {
-         Process.Start(saveReportsPath);
-         showErrors = false;
-         for (int i = 0; i < selectableCodes.Count; i++) {
-            generateBatteryReport(selectableCodes[i]);
-         }
-         showErrors = true;
-      }
-
-
-      private void generateBatteryReport(string code)
-      {
-         code += " ";
-         string[] reports = new string[numberColumns];
-         int pathLength = batteryLogsPath.Length + 1;
-         string[] networkFiles = Directory.GetFiles(batteryLogsPath);
-         foreach (string file in networkFiles)
-         {
-            string postDir = file.Substring(pathLength);
-            if (postDir.StartsWith(code))
-            {
-               string lastData = getFileData(file);
-               if (lastData.Length > 5)
-               {
-                  setReports(lastData, ref reports);
+                  FileOutput = new StreamWriter(fileName);
+                  serialManager.arduinoPort.DataReceived += ArduinoPort_DataReceived;
                }
                else
                {
-                  lastData = getFileData(file, 5);
-                  if(lastData.Length < 5)
-                  {
-                     if (showErrors)
-                     {
-                        showSimpleDialog("File lines all seem too small: " + file);
-                     }
-                  }
-                  setReports(lastData, ref reports);
+                  MessageBox.Show("Connection Failure..");
+                  DischargeButton.IsChecked = false;
                }
-            }
-         }
-
-         saveReports(reports, code);
-
-         if (showErrors)
-         {
-            Process.Start(saveReportsPath);
-         }
-      }
-
-      private void setReports(string data, ref string[] reports)
-      {
-         string[] splits = data.Split(',');
-         if (splits.Length == numberColumns) {
-            for (int i = 0; i < numberColumns; i++)
-            {
-               reports[i] += splits[i] +",";
             }
          }
          else
          {
-            if (showErrors)
+            if (serialManager.Disconnect())
             {
-               showSimpleDialog("Invalid number of deliminators: " + splits.Length);
-            }
-         }
-
-
-      }
-
-      private string getFileData(string file, int numberFromEnd = 2)
-      {
-         try
-         {
-            string[] lines = File.ReadAllLines(file);
-            int length = lines.Length - numberFromEnd;
-            if (length >= minimumFileLines) {
-               return lines[length];
+               serialManager.arduinoPort.DataReceived -= ArduinoPort_DataReceived;
+               if (FileOutput != null)
+               {
+                  FileOutput.Close();
+               }
             }
             else
             {
-               if (showErrors)
-               {
-                  showSimpleDialog("Not enough lines in: " + file + ". Only found: " + length);
-               }
+               MessageBox.Show("Connection Failure..");
+               DischargeButton.IsChecked = true;
             }
          }
-         catch(Exception err)
-         {
-            showSimpleDialog("Error accessing file: " + file + ". Error code: " + err);
-         }
-         return "";
+
       }
 
-      private void saveReports(string[] reports, string code)
-      {
-         for (int i = 0; i < numberColumns; i++)
-         {
-            if (saveColumn[i])
-            {
-               try
-               {
-                  File.WriteAllText(saveReportsPath + @"\" + code + columnNames[i]+ " report.csv", reports[i]);
-               }
-               catch (Exception err)
-               {
-                  showSimpleDialog("An error occured creating the report: " + err);
-               }
-            }
-         }
-      }
-
-
-
-
-
-
-
-      private void createExcel(string path, string name)
-      {
-         object oMissing = System.Reflection.Missing.Value;
-
-         Excel.Application xlApp = new Excel.Application();
-         Excel.Workbook xlWorkBook = xlApp.Workbooks.Open(path);
-         Excel.Worksheet xlWorkSheet = (Excel.Worksheet)xlWorkBook.Worksheets.get_Item(1);
-
-         xlApp.Visible = true;
-
-         //createExcelChart(xlWorkSheet, oMissing, "A"); //Status graph
-
-         cellColumns chartType = cellColumns.current;
-         createExcelChart(xlWorkSheet, oMissing, chartType); //Current
-
-
-         tryCreateDirectory(saveReportsPath);
-         string saveName = getSavePath(saveReportsPath, "Excel save name", ".xls", name);
-         showSimpleDialog(saveName);
-         if (saveName != "" && saveName != null && saveName != name)
-         {
-            xlWorkBook.SaveAs(saveName, Excel.XlFileFormat.xlWorkbookNormal,
-                oMissing, oMissing, oMissing, oMissing, Excel.XlSaveAsAccessMode.xlExclusive,
-                oMissing, oMissing, oMissing, oMissing, oMissing);
-         }
-
-         xlWorkBook.Close(true, oMissing, oMissing);
-         xlApp.Quit();
-
-         releaseObject(xlWorkSheet);
-         releaseObject(xlWorkBook);
-         releaseObject(xlApp);
-      }
-
-      private void releaseObject(object obj)
+      private void ArduinoPort_DataReceived(object sender, SerialDataReceivedEventArgs e)
       {
          try
          {
-            if (obj != null)
+            string data = serialManager.arduinoPort.ReadTo("\n");
+
+            if (FileOutput != null)
             {
-               System.Runtime.InteropServices.Marshal.ReleaseComObject(obj);
-               obj = null;
+               FileOutput.WriteLine(data);
             }
+
+            RTB.AppendText(data);
+
+            ValueSet valueSet = DataParser.GetValues(data);
+
+            UpdateUI(valueSet);
+
          }
          catch (Exception err)
          {
-            obj = null;
-            MessageBox.Show("Exception Occured while releasing object " + err.ToString());
-         }
-         finally
-         {
-            GC.Collect();
+            MessageBox.Show("Error receiving data: " + err);
          }
       }
 
-      private string getSavePath(string iniDirectory, string message, string ext, string name = "")
+      private void SettingsButt_Click(object sender, RoutedEventArgs e)
       {
-         Forms.SaveFileDialog dialog = new Forms.SaveFileDialog();
-         dialog.FileName = name;
-         dialog.DefaultExt = ext;
-         dialog.InitialDirectory = iniDirectory;
-         dialog.Title = message;
-
-         dialog.ShowDialog();
-         string savePath = dialog.FileName;
-         if (savePath == null || savePath.Length < 5)
-         {
-            savePath = getSavePath(iniDirectory, message, ext, name);
-         }
-         return savePath;
+         MessageBox.Show("What settings do we want?");
       }
 
-      private void tryCreateDirectory(string path)
+      private void CurrentSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
       {
-         if (!Directory.Exists(path))
-         {
-            try
-            {
-               Directory.CreateDirectory(path);
-            }
-            catch (Exception err)
-            {
-               showSimpleDialog("An error occured creating the save reports directory (" + path + ") Error: " + err, "Directory error", Forms.MessageBoxIcon.Error);
-               Environment.Exit(1);
-            }
-         }
+         serialManager.SetCurrentAim(CurrentSlider.Value);
       }
 
 
-      private void createExcelChart(Excel.Worksheet xlWorkSheet, object oMissing, cellColumns type)
+
+      private string GetSavePath()
       {
-         string rangeEndLetter = "" + (char)type;
+         string saveLocation = @"C:\GREENPOWER\DISCHARGE RIG\Discharge Logs";
 
-         Excel.Range chartRange;
+         SaveFileDialog sfd = new SaveFileDialog();
 
-         Excel.ChartObjects xlCharts = (Excel.ChartObjects)xlWorkSheet.ChartObjects(Type.Missing);
-         Excel.ChartObject myChart = (Excel.ChartObject)xlCharts.Add(10, 80, 300, 250);
-         Excel.Chart chartPage = myChart.Chart;
+         if (!Directory.Exists(saveLocation))
+         {
+            Directory.CreateDirectory(saveLocation);
+         }
 
-         int rowCounts = xlWorkSheet.Rows.Count;
-         string rangeEndConverted = "" + rangeEndLetter;
-         string rangeEnd = rangeEndConverted + rowCounts;
+         sfd.InitialDirectory = saveLocation;
+         sfd.Filter = "Comma Separarted Values (*.csv)|*.csv";
 
-         chartRange = xlWorkSheet.get_Range("A1", rangeEnd);
-         chartPage.SetSourceData(chartRange, oMissing);
-         chartPage.ChartType = Excel.XlChartType.xlLineMarkers;
+         if (sfd.ShowDialog() == true)
+         {
+            return sfd.FileName;
+         }
+         return null;
       }
 
+      public void Dispose()
+      {
+         serialManager.arduinoPort.DataReceived -= ArduinoPort_DataReceived;
+         serialManager.Disconnect();
+         serialManager.Dispose();
+      }
    }
 }
