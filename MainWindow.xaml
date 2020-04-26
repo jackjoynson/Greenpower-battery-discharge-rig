@@ -1,0 +1,20 @@
+﻿<Window x:Class="BatteryLogPlotter.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:BatteryLogPlotter"
+        mc:Ignorable="d"
+        Title="MainWindow" >
+    <Grid Background="#FFFF9933">
+        <Button x:Name="btnGenerateSingleReport" Content="Generate File Report" HorizontalAlignment="Left" Margin="34,0,0,58" Width="225" Click="btnGenerateSingleReport_Click" Height="40" VerticalAlignment="Bottom"/>
+        <Label x:Name="lblFile" Content="Discharge file:" HorizontalAlignment="Left" Margin="34,71,0,0" VerticalAlignment="Top" Width="100"/>
+        <TextBox x:Name="txtDirectory" HorizontalAlignment="Left" Height="23" Margin="34,30,0,0" TextWrapping="Wrap" Text="" VerticalAlignment="Top" Width="300"/>
+        <Button x:Name="btnBrowse" Content="Browse.." HorizontalAlignment="Left" Margin="339,30,0,0" VerticalAlignment="Top" Width="75" Height="23" Click="btnBrowse_Click"/>
+        <ListBox x:Name="lstDischargeFiles" HorizontalAlignment="Left" Margin="34,102,0,103" Width="225"/>
+        <Button x:Name="btnGenerateBatteryReport" Content="Generate Battery Reports" HorizontalAlignment="Left" Margin="339,0,0,58" Width="225" Click="btnGenerateBatteryReport_Click" Height="40" VerticalAlignment="Bottom"/>
+        <Label x:Name="lblCode" Content="Battery Code:" HorizontalAlignment="Left" Margin="339,71,0,0" VerticalAlignment="Top" Width="100"/>
+        <ListBox x:Name="lstBatteryCodes" HorizontalAlignment="Left" Margin="339,102,0,103" Width="225"/>
+        <Button x:Name="allButton" Content="Process All (VERY SLOW!)" HorizontalAlignment="Left" Margin="569,0,0,58" VerticalAlignment="Bottom" Width="165" Height="40" Click="allButton_Click"/>
+    </Grid>
+</Window>
